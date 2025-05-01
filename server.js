@@ -36,6 +36,106 @@ app.get("/", (req, res) => {
   res.send("Servidor está funcionando! Acesse /usuarios para interagir com os dados.");
 });
 
+// ==================== Rotas da interface MANIFESTO ==================== //
+
+app.get("/entrega", (req, res) => {
+  const sql = `
+    SELECT
+      COUNT(*) AS total_entregas,
+      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS entregas_concluidas
+    FROM frete
+    WHERE tipo = 13
+    GROUP BY id_manifesto;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar manifestos:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar manifestos" });
+    }
+
+    res.status(200).json(results);
+  });
+});
+
+app.get("/coleta", (req, res) => {
+  const sql = `
+    SELECT
+      COUNT(*) AS total_coletas,
+      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS coletas_concluidas
+    FROM coleta
+    WHERE tipo = 3;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar coletas:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar coletas" });
+    }
+
+    res.status(200).json(results[0]);
+  });
+});
+
+app.get("/despacho", (req, res) => {
+  const sql = `
+  SELECT
+    COUNT(*) AS total_despachos,
+    SUM(CASE WHEN om.id_ocorrencia = 1 THEN 1 ELSE 0 END) AS despachos_concluidos
+  FROM frete_documento fd
+  JOIN ocorrencia_movimento om ON fd.id = om.id_documento;
+`;
+
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar despachos:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar despachos" });
+    }
+
+    res.status(200).json(results[0]);
+  });
+});
+
+app.get("/retirada", (req, res) => {
+  const sql = `
+    SELECT
+      COUNT(*) AS total_retiradas,
+      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS retiradas_concluidas
+    FROM coleta
+    WHERE tipo = 2;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar retiradas:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar retiradas" });
+    }
+
+    res.status(200).json(results[0]); 
+  });
+});
+
+app.get("/transferencia", (req, res) => {
+  const sql = `
+    SELECT
+      COUNT(*) AS total_transferencias,
+      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS transferencias_concluidas
+    FROM frete
+    WHERE tipo = 13
+    GROUP BY id_manifesto;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar transferências:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar transferências" });
+    }
+
+    res.status(200).json(results);
+  });
+});
+
 // ==================== CRUD para a tabela 'minuta' ==================== //
 
 // ✅ Listar todas as minutas
@@ -363,7 +463,7 @@ app.delete("/historicos_frete/:id", (req, res) => {
 // ==================== CRUD para a tabela 'coleta' ==================== //
 
 // ✅ Listar todas as coletas
-app.get("/coleta", (req, res) => {
+app.get("/coletas", (req, res) => {
   const sql = "SELECT * FROM coleta";
   db.query(sql, (err, results) => {
     if (err) {
@@ -375,7 +475,7 @@ app.get("/coleta", (req, res) => {
 });
 
 // ✅ Criar nova coleta
-app.post("/coleta", (req, res) => {
+app.post("/coletas", (req, res) => {
   const data = req.body;
 
   // Verificar campos obrigatórios
@@ -400,7 +500,7 @@ app.post("/coleta", (req, res) => {
 });
 
 // ✅ Buscar uma coleta por ID
-app.get("/coleta/:id", (req, res) => {
+app.get("/coletas/:id", (req, res) => {
   const { id } = req.params;
   const sql = "SELECT * FROM coleta WHERE id = ?";
   db.query(sql, [id], (err, results) => {
@@ -416,7 +516,7 @@ app.get("/coleta/:id", (req, res) => {
 });
 
 // ✅ Atualizar uma coleta
-app.put("/coleta/:id", (req, res) => {
+app.put("/coletas/:id", (req, res) => {
   const { id } = req.params;
   const data = req.body;
   data.dt_modificacao = new Date();
@@ -435,7 +535,7 @@ app.put("/coleta/:id", (req, res) => {
 });
 
 // ✅ Deletar uma coleta
-app.delete("/coleta/:id", (req, res) => {
+app.delete("/coletas/:id", (req, res) => {
   const { id } = req.params;
   const sql = "DELETE FROM coleta WHERE id = ?";
   db.query(sql, [id], (err, results) => {
