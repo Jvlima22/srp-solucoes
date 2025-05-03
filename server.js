@@ -136,6 +136,211 @@ app.get("/transferencia", (req, res) => {
   });
 });
 
+// ==================== Rotas da interface ENTREGA ==================== //
+
+app.get("/info-entrega", (req, res) => {
+  const sql = `
+    SELECT 
+      f.id AS frete_id,
+      f.numero_cte,
+      f.contato_destinatario,
+      f.id_local_destino,
+      f.status,
+      fd.numero AS numero_documento,
+      COALESCE(om.id, 0) AS tem_ocorrencia
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    LEFT JOIN ocorrencia_movimento om ON om.id_movimento = f.id
+    WHERE f.tipo = 13;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar entregas:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar entregas" });
+    }
+
+    // Transformação para leitura mais amigável pela UI
+    const entregas = results.map(entrega => ({
+      documento: entrega.numero_documento,
+      frete: entrega.frete_id,
+      cte: entrega.numero_cte === 0 ? "Sem informação" : entrega.numero_cte,
+      destinatario: entrega.contato_destinatario,
+      cidade: "DIADEMA", // fixo no layout pois não temos tabela de cidades
+      uf: "SP", // idem
+      status: entrega.status === 1 ? "EM ABERTO" : "OUTRO",
+      ocorrencia: entrega.tem_ocorrencia ? "Com Registro" : "Sem Registro"
+    }));
+
+    res.status(200).json(entregas);
+  });
+});
+
+// ==================== Rotas da interface COLETA ==================== //
+
+app.get("/info-coleta", (req, res) => {
+  const sql = `
+    SELECT 
+      f.id AS frete_id,
+      f.id_cliente,
+      f.id_local_destino AS id_local_coleta,  -- Ajuste feito aqui para usar id_local_destino
+      f.status,
+      COUNT(fd.id) AS total_documento
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    WHERE f.tipo = 12
+    GROUP BY f.id, f.id_cliente, f.id_local_destino, f.status;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar coletas:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar coletas" });
+    }
+  
+    console.log(results);  // Log para ver os dados retornados
+  
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Nenhuma coleta encontrada." });
+    }
+  
+    const coletas = results.map(coleta => ({
+      coleta_numero: coleta.frete_id,
+      total_documento: coleta.total_documento,
+      local: `Cliente ID ${coleta.id_cliente}`,
+      cidade: "São Paulo", 
+      uf: "SP",
+      status: coleta.status === 2 ? "EM TRANSITO" : "OUTRO"
+    }));
+  
+    res.status(200).json(coletas);
+  });
+  
+});
+
+// ==================== Rotas da interface DESPACHO ==================== //
+
+app.get("/info-despacho", (req, res) => {
+  const sql = `
+    SELECT 
+      f.id AS frete_id,
+      f.volume AS total_volume,
+      f.status,
+      COUNT(fd.id) AS total_documento
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    WHERE f.tipo = 6
+    GROUP BY f.id, f.volume, f.status
+    ORDER BY f.id DESC;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar despachos:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar despachos" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Nenhum despacho encontrado." });
+    }
+
+    const despachos = results.map(despacho => ({
+      minuta_numero: despacho.frete_id,
+      total_frete: 1,
+      total_documento: despacho.total_documento,
+      total_volume: despacho.total_volume,
+      local: "Cia teste de sistema", // fixo por enquanto
+      cidade: "JUNDIAÍ",
+      uf: "SP",
+      status: despacho.status === 4 ? "EM ABERTO" : "OUTRO"
+    }));
+
+    res.status(200).json(despachos);
+  });
+});
+
+// ==================== Rotas da interface RETIRADA ==================== //
+
+app.get("/info-retirada", (req, res) => {
+  const sql = `
+    SELECT 
+      f.id AS frete_id,
+      f.volume AS total_volume,
+      f.status,
+      COUNT(fd.id) AS total_documento
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    WHERE f.tipo = 5 -- assumindo que 5 representa retirada
+    GROUP BY f.id, f.volume, f.status
+    ORDER BY f.id DESC;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar retiradas:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar retiradas" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Nenhuma retirada encontrada." });
+    }
+
+    const retiradas = results.map(retirada => ({
+      minuta_numero: retirada.frete_id,
+      total_frete: 2, // conforme imagem
+      total_documento: retirada.total_documento,
+      total_volume: retirada.total_volume,
+      local: "Cia teste de sistema", // fixo por enquanto
+      cidade: "JUNDIAÍ",
+      uf: "SP",
+      status: retirada.status === 4 ? "EM ABERTO" : "OUTRO"
+    }));
+
+    res.status(200).json(retiradas);
+  });
+});
+
+// ==================== Rotas da interface TRANSFERÊNCIA ==================== //
+
+app.get("/info-transferencia", (req, res) => {
+  const sql = `
+    SELECT 
+      f.id AS frete_id,
+      f.volume AS total_volume,
+      f.status,
+      COUNT(fd.id) AS total_documento
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    WHERE f.tipo = 7
+    GROUP BY f.id, f.volume, f.status
+    ORDER BY f.id DESC;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar transferências:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar transferências" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Nenhuma transferência encontrada." });
+    }
+
+    const transferencias = results.map(t => ({
+      minuta_numero: t.frete_id,
+      total_frete: 2,
+      total_documento: t.total_documento,
+      total_volume: t.total_volume,
+      local: "Unidade de teste sistema", 
+      cidade: "AMARANTE",
+      uf: "PI",
+      status: t.status === 4 ? "EM ABERTO" : "OUTRO"
+    }));
+
+    res.status(200).json(transferencias);
+  });
+});
+
 // ==================== CRUD para a tabela 'minuta' ==================== //
 
 // ✅ Listar todas as minutas
