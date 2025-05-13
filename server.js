@@ -36,6 +36,70 @@ app.get("/", (req, res) => {
   res.send("Servidor está funcionando! Acesse /usuarios para interagir com os dados.");
 });
 
+// ==================== Rotas da interface LOGIN ==================== //
+
+app.get("/login", (req, res) => {
+  const { login, senha, unidade } = req.query;
+
+  console.log("Dados recebidos:", { login, senha, unidade });
+
+  const sql = `
+    SELECT 
+      us.id,
+      us.nome,
+      us.login,
+      us.id_unidade,
+      uc.etiqueta AS nome_unidade
+    FROM usuario_sistema us
+    JOIN unidade_configuracao uc ON us.id_unidade = uc.id
+    WHERE us.login = ? AND us.senha = ? AND us.id_unidade = ? AND us.status = 1
+  `;
+
+  db.query(sql, [login, senha, unidade], (err, results) => {
+    if (err) {
+      console.error("Erro ao validar login:", err.message);
+      return res.status(500).json({ error: "Erro interno no servidor" });
+    }
+
+    if (results.length === 0) {
+      return res.status(401).json({ error: "Credenciais inválidas" });
+    }
+
+    res.status(200).json({
+      message: "Login realizado com sucesso",
+      usuario: results[0],
+    });
+  });
+});
+
+app.get("/usuarios", (req, res) => {
+  const sql = `
+    SELECT
+      us.id,
+      us.nome,
+      us.login,
+      us.id_unidade,
+      uc.etiqueta AS nome_unidade,
+      us.status,
+      us.perfil,
+      us.nivel_acesso,
+      us.dt_cadastro,
+      us.dt_modificacao
+    FROM usuario_sistema us
+    JOIN unidade_configuracao uc ON uc.id = us.id_unidade
+    ORDER BY us.nome ASC;
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar usuários:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar usuários" });
+    }
+
+    res.status(200).json(results);
+  });
+});
+
 // ==================== Rotas da interface MANIFESTO ==================== //
 
 app.get("/entrega", (req, res) => {
@@ -136,7 +200,7 @@ app.get("/transferencia", (req, res) => {
   });
 });
 
-// ==================== Rotas da interface ENTREGA ==================== //
+// ==================== Rota da interface ENTREGA ==================== //
 
 app.get("/info-entrega", (req, res) => {
   const sql = `
@@ -176,7 +240,7 @@ app.get("/info-entrega", (req, res) => {
   });
 });
 
-// ==================== Rotas da interface COLETA ==================== //
+// ==================== Rota da interface COLETA ==================== //
 
 app.get("/info-coleta", (req, res) => {
   const sql = `
@@ -198,7 +262,7 @@ app.get("/info-coleta", (req, res) => {
       return res.status(500).json({ error: "Erro ao buscar coletas" });
     }
   
-    console.log(results);  // Log para ver os dados retornados
+    console.log(results); 
   
     if (results.length === 0) {
       return res.status(404).json({ message: "Nenhuma coleta encontrada." });
@@ -218,7 +282,7 @@ app.get("/info-coleta", (req, res) => {
   
 });
 
-// ==================== Rotas da interface DESPACHO ==================== //
+// ==================== Rota da interface DESPACHO ==================== //
 
 app.get("/info-despacho", (req, res) => {
   const sql = `
@@ -259,7 +323,7 @@ app.get("/info-despacho", (req, res) => {
   });
 });
 
-// ==================== Rotas da interface RETIRADA ==================== //
+// ==================== Rota da interface RETIRADA ==================== //
 
 app.get("/info-retirada", (req, res) => {
   const sql = `
@@ -300,7 +364,7 @@ app.get("/info-retirada", (req, res) => {
   });
 });
 
-// ==================== Rotas da interface TRANSFERÊNCIA ==================== //
+// ==================== Rota da interface TRANSFERÊNCIA ==================== //
 
 app.get("/info-transferencia", (req, res) => {
   const sql = `
