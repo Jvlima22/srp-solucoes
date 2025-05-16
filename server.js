@@ -48,11 +48,10 @@ app.get("/login", (req, res) => {
       us.id,
       us.nome,
       us.login,
-      us.id_unidade,
-      uc.etiqueta AS nome_unidade
-    FROM usuario_sistema us
-    JOIN unidade_configuracao uc ON us.id_unidade = uc.id
-    WHERE us.login = ? AND us.senha = ? AND us.id_unidade = ? AND us.status = 1
+      te.nome AS nome_unidade
+    FROM srpsoluc_teste.usuario_sistema us
+    JOIN srpsoluc_tmenu.tms_empresas te ON us.id_unidade = te.id
+    WHERE us.login = ? AND us.senha = ? AND te.nome = ? AND us.status = 1
   `;
 
   db.query(sql, [login, senha, unidade], (err, results) => {
@@ -65,9 +64,16 @@ app.get("/login", (req, res) => {
       return res.status(401).json({ error: "Credenciais inválidas" });
     }
 
+    const { id, nome, login: usuarioLogin, nome_unidade } = results[0];
+
     res.status(200).json({
       message: "Login realizado com sucesso",
-      usuario: results[0],
+      usuario: {
+        id,
+        nome,
+        login: usuarioLogin,
+        nome_unidade,
+      },
     });
   });
 });
@@ -105,18 +111,17 @@ app.get("/usuarios", (req, res) => {
 app.get("/manifesto", (req, res) => {
   const sql = `
     SELECT
+      'Geral' AS manifesto,
       (SELECT COUNT(*) FROM frete WHERE tipo = 13) AS total_entregas,
       (SELECT COUNT(*) FROM frete WHERE tipo = 13 AND status = 1) AS entregas_concluidas,
 
       (SELECT COUNT(*) FROM coleta WHERE tipo = 3) AS total_coletas,
       (SELECT COUNT(*) FROM coleta WHERE tipo = 3 AND status = 1) AS coletas_concluidas,
 
-      (SELECT COUNT(*) 
-         FROM frete_documento fd
+      (SELECT COUNT(*) FROM frete_documento fd
          JOIN ocorrencia_movimento om ON fd.id = om.id_documento
       ) AS total_despachos,
-      (SELECT COUNT(*) 
-         FROM frete_documento fd
+      (SELECT COUNT(*) FROM frete_documento fd
          JOIN ocorrencia_movimento om ON fd.id = om.id_documento
          WHERE om.id_ocorrencia = 1
       ) AS despachos_concluidos,
@@ -135,13 +140,14 @@ app.get("/manifesto", (req, res) => {
     }
 
     const data = results[0];
-    res.status(200).json({
+    res.status(200).json([{
+      manifesto: data.manifesto,
       entrega: `${data.total_entregas} / ${data.entregas_concluidas}`,
       coleta: `${data.total_coletas} / ${data.coletas_concluidas}`,
       despacho: `${data.total_despachos} / ${data.despachos_concluidos}`,
       retirada: `${data.total_retiradas} / ${data.retiradas_concluidas}`,
       transferencia: `${data.total_transferencias} / ${data.transferencias_concluidas}`
-    });
+    }]);
   });
 });
 
