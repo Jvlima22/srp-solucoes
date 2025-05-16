@@ -102,101 +102,46 @@ app.get("/usuarios", (req, res) => {
 
 // ==================== Rotas da interface MANIFESTO ==================== //
 
-app.get("/entrega", (req, res) => {
+app.get("/manifesto", (req, res) => {
   const sql = `
     SELECT
-      COUNT(*) AS total_entregas,
-      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS entregas_concluidas
-    FROM frete
-    WHERE tipo = 13
-    GROUP BY id_manifesto;
+      (SELECT COUNT(*) FROM frete WHERE tipo = 13) AS total_entregas,
+      (SELECT COUNT(*) FROM frete WHERE tipo = 13 AND status = 1) AS entregas_concluidas,
+
+      (SELECT COUNT(*) FROM coleta WHERE tipo = 3) AS total_coletas,
+      (SELECT COUNT(*) FROM coleta WHERE tipo = 3 AND status = 1) AS coletas_concluidas,
+
+      (SELECT COUNT(*) 
+         FROM frete_documento fd
+         JOIN ocorrencia_movimento om ON fd.id = om.id_documento
+      ) AS total_despachos,
+      (SELECT COUNT(*) 
+         FROM frete_documento fd
+         JOIN ocorrencia_movimento om ON fd.id = om.id_documento
+         WHERE om.id_ocorrencia = 1
+      ) AS despachos_concluidos,
+
+      (SELECT COUNT(*) FROM coleta WHERE tipo = 2) AS total_retiradas,
+      (SELECT COUNT(*) FROM coleta WHERE tipo = 2 AND status = 1) AS retiradas_concluidas,
+
+      (SELECT COUNT(*) FROM frete WHERE tipo = 14) AS total_transferencias,
+      (SELECT COUNT(*) FROM frete WHERE tipo = 14 AND status = 1) AS transferencias_concluidas
   `;
 
   db.query(sql, (err, results) => {
     if (err) {
-      console.error("Erro ao buscar manifestos:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar manifestos" });
+      console.error("Erro ao buscar dados do manifesto:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar dados do manifesto" });
     }
 
-    res.status(200).json(results);
-  });
-});
-
-app.get("/coleta", (req, res) => {
-  const sql = `
-    SELECT
-      COUNT(*) AS total_coletas,
-      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS coletas_concluidas
-    FROM coleta
-    WHERE tipo = 3;
-  `;
-
-  db.query(sql, (err, results) => {
-    if (err) {
-      console.error("Erro ao buscar coletas:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar coletas" });
-    }
-
-    res.status(200).json(results[0]);
-  });
-});
-
-app.get("/despacho", (req, res) => {
-  const sql = `
-  SELECT
-    COUNT(*) AS total_despachos,
-    SUM(CASE WHEN om.id_ocorrencia = 1 THEN 1 ELSE 0 END) AS despachos_concluidos
-  FROM frete_documento fd
-  JOIN ocorrencia_movimento om ON fd.id = om.id_documento;
-`;
-
-
-  db.query(sql, (err, results) => {
-    if (err) {
-      console.error("Erro ao buscar despachos:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar despachos" });
-    }
-
-    res.status(200).json(results[0]);
-  });
-});
-
-app.get("/retirada", (req, res) => {
-  const sql = `
-    SELECT
-      COUNT(*) AS total_retiradas,
-      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS retiradas_concluidas
-    FROM coleta
-    WHERE tipo = 2;
-  `;
-
-  db.query(sql, (err, results) => {
-    if (err) {
-      console.error("Erro ao buscar retiradas:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar retiradas" });
-    }
-
-    res.status(200).json(results[0]); 
-  });
-});
-
-app.get("/transferencia", (req, res) => {
-  const sql = `
-    SELECT
-      COUNT(*) AS total_transferencias,
-      SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS transferencias_concluidas
-    FROM frete
-    WHERE tipo = 13
-    GROUP BY id_manifesto;
-  `;
-
-  db.query(sql, (err, results) => {
-    if (err) {
-      console.error("Erro ao buscar transferências:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar transferências" });
-    }
-
-    res.status(200).json(results);
+    const data = results[0];
+    res.status(200).json({
+      entrega: `${data.total_entregas} / ${data.entregas_concluidas}`,
+      coleta: `${data.total_coletas} / ${data.coletas_concluidas}`,
+      despacho: `${data.total_despachos} / ${data.despachos_concluidos}`,
+      retirada: `${data.total_retiradas} / ${data.retiradas_concluidas}`,
+      transferencia: `${data.total_transferencias} / ${data.transferencias_concluidas}`
+    });
   });
 });
 
