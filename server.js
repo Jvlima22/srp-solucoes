@@ -111,26 +111,26 @@ app.get("/usuarios", (req, res) => {
 app.get("/manifesto", (req, res) => {
   const sql = `
     SELECT
-      'Geral' AS manifesto,
-      (SELECT COUNT(*) FROM frete WHERE tipo = 13) AS total_entregas,
-      (SELECT COUNT(*) FROM frete WHERE tipo = 13 AND status = 1) AS entregas_concluidas,
+      mm.id_manifesto,
+      CONCAT('Manifesto ', mm.id_manifesto) AS manifesto,
 
-      (SELECT COUNT(*) FROM coleta WHERE tipo = 3) AS total_coletas,
-      (SELECT COUNT(*) FROM coleta WHERE tipo = 3 AND status = 1) AS coletas_concluidas,
+      SUM(CASE WHEN f.tipo = 13 THEN 1 ELSE 0 END) AS total_entregas,
+      SUM(CASE WHEN f.tipo = 13 AND f.status = 1 THEN 1 ELSE 0 END) AS entregas_concluidas,
 
-      (SELECT COUNT(*) FROM frete_documento fd
-         JOIN ocorrencia_movimento om ON fd.id = om.id_documento
-      ) AS total_despachos,
-      (SELECT COUNT(*) FROM frete_documento fd
-         JOIN ocorrencia_movimento om ON fd.id = om.id_documento
-         WHERE om.id_ocorrencia = 1
-      ) AS despachos_concluidos,
+      SUM(CASE WHEN c.tipo = 3 THEN 1 ELSE 0 END) AS total_coletas,
+      SUM(CASE WHEN c.tipo = 3 AND c.status = 1 THEN 1 ELSE 0 END) AS coletas_concluidas,
 
-      (SELECT COUNT(*) FROM coleta WHERE tipo = 2) AS total_retiradas,
-      (SELECT COUNT(*) FROM coleta WHERE tipo = 2 AND status = 1) AS retiradas_concluidas,
+      SUM(CASE WHEN c.tipo = 2 THEN 1 ELSE 0 END) AS total_retiradas,
+      SUM(CASE WHEN c.tipo = 2 AND c.status = 1 THEN 1 ELSE 0 END) AS retiradas_concluidas,
 
-      (SELECT COUNT(*) FROM frete WHERE tipo = 14) AS total_transferencias,
-      (SELECT COUNT(*) FROM frete WHERE tipo = 14 AND status = 1) AS transferencias_concluidas
+      SUM(CASE WHEN f.tipo = 14 THEN 1 ELSE 0 END) AS total_transferencias,
+      SUM(CASE WHEN f.tipo = 14 AND f.status = 1 THEN 1 ELSE 0 END) AS transferencias_concluidas
+
+    FROM manifesto_movimento mm
+    LEFT JOIN frete f ON mm.id_movimento = f.id AND mm.id_tipo_movimento = 1
+    LEFT JOIN coleta c ON mm.id_movimento = c.id AND mm.id_tipo_movimento = 2
+    GROUP BY mm.id_manifesto
+    ORDER BY mm.id_manifesto DESC
   `;
 
   db.query(sql, (err, results) => {
@@ -139,17 +139,20 @@ app.get("/manifesto", (req, res) => {
       return res.status(500).json({ error: "Erro ao buscar dados do manifesto" });
     }
 
-    const data = results[0];
-    res.status(200).json([{
-      manifesto: data.manifesto,
-      entrega: `${data.total_entregas} / ${data.entregas_concluidas}`,
-      coleta: `${data.total_coletas} / ${data.coletas_concluidas}`,
-      despacho: `${data.total_despachos} / ${data.despachos_concluidos}`,
-      retirada: `${data.total_retiradas} / ${data.retiradas_concluidas}`,
-      transferencia: `${data.total_transferencias} / ${data.transferencias_concluidas}`
-    }]);
+    const data = results.map(row => ({
+      id_manifesto: row.id_manifesto,
+      entrega: `${row.total_entregas} / ${row.entregas_concluidas}`,
+      coleta: `${row.total_coletas} / ${row.coletas_concluidas}`,
+      retirada: `${row.total_retiradas} / ${row.retiradas_concluidas}`,
+      transferencia: `${row.total_transferencias} / ${row.transferencias_concluidas}`,
+      despacho: `0 / 0` 
+    }));
+
+    res.status(200).json(data);
   });
 });
+
+
 
 // ==================== Rota da interface ENTREGA ==================== //
 
