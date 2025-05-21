@@ -5,13 +5,13 @@ const mysql = require("mysql2");
 const cors = require("cors");
 const dotenv = require("dotenv");
 
-dotenv.config();  // Carregar variáveis de ambiente a partir de um arquivo .env, se existir
+dotenv.config(); 
 
 const app = express();
 
 // Middlewares
-app.use(express.json());  // Para processar o corpo das requisições em formato JSON
-app.use(cors());  // Permitir requisições de diferentes origens (necessário para o React Native)
+app.use(express.json()); 
+app.use(cors());  
 
 // Configuração do banco de dados
 const db = mysql.createConnection({
@@ -152,7 +152,122 @@ app.get("/manifesto", (req, res) => {
   });
 });
 
+// ==================== Rota da interface OCORRÊNCIAS ==================== //
 
+app.get("/ocorrencias/:id", async (req, res) => {
+  const manifestoId = req.params.id;
+
+  const tipos = {
+    13: "entrega",
+    12: "coleta",
+    6: "despacho",
+    5: "retirada",
+    7: "transferencia"
+  };
+
+  const sql = `
+    SELECT 
+      f.id AS frete_id,
+      f.numero_cte,
+      f.contato_destinatario,
+      f.id_local_destino,
+      f.id_cliente,
+      f.status,
+      f.volume,
+      f.tipo,
+      fd.numero AS numero_documento,
+      COUNT(fd.id) AS total_documento,
+      COALESCE(om.id, 0) AS tem_ocorrencia
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    LEFT JOIN ocorrencia_movimento om ON om.id_movimento = f.id
+    WHERE f.id_manifesto = ?
+    GROUP BY f.id;
+  `;
+
+  db.query(sql, [manifestoId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar dados do manifesto:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar dados do manifesto" });
+    }
+
+    const formatado = results.map(item => {
+      const tipo = parseInt(item.tipo);
+      const tipoNome = tipos[tipo] || `tipo_${tipo}`;
+
+      switch (tipo) {
+        case 13: // ENTREGA
+          return {
+            tipo: "entrega",
+            documento: item.numero_documento,
+            frete: item.frete_id,
+            cte: item.numero_cte === 0 ? "Sem informação" : item.numero_cte,
+            destinatario: item.contato_destinatario,
+            cidade: "DIADEMA",
+            uf: "SP",
+            status: item.status === 1 ? "EM ABERTO" : "OUTRO",
+            ocorrencia: item.tem_ocorrencia ? "Com Registro" : "Sem Registro"
+          };
+        case 12: // COLETA
+          return {
+            tipo: "coleta",
+            coleta_numero: item.frete_id,
+            total_documento: item.total_documento,
+            local: `Cliente ID ${item.id_cliente}`,
+            cidade: "São Paulo",
+            uf: "SP",
+            status: item.status === 2 ? "EM TRANSITO" : "OUTRO"
+          };
+        case 6: // DESPACHO
+          return {
+            tipo: "despacho",
+            minuta_numero: item.frete_id,
+            total_frete: 1,
+            total_documento: item.total_documento,
+            total_volume: item.volume,
+            local: "Cia teste de sistema",
+            cidade: "JUNDIAÍ",
+            uf: "SP",
+            status: item.status === 4 ? "EM ABERTO" : "OUTRO"
+          };
+        case 5: // RETIRADA
+          return {
+            tipo: "retirada",
+            minuta_numero: item.frete_id,
+            total_frete: 2,
+            total_documento: item.total_documento,
+            total_volume: item.volume,
+            local: "Cia teste de sistema",
+            cidade: "JUNDIAÍ",
+            uf: "SP",
+            status: item.status === 4 ? "EM ABERTO" : "OUTRO"
+          };
+        case 7: // TRANSFERÊNCIA
+          return {
+            tipo: "transferencia",
+            minuta_numero: item.frete_id,
+            total_frete: 2,
+            total_documento: item.total_documento,
+            total_volume: item.volume,
+            local: "Unidade de teste sistema",
+            cidade: "AMARANTE",
+            uf: "PI",
+            status: item.status === 4 ? "EM ABERTO" : "OUTRO"
+          };
+        default:
+          // Para tipos fora dos principais
+          return {
+            tipo: tipoNome,
+            frete: item.frete_id,
+            status: `Status ${item.status}`,
+            documentos: item.total_documento
+          };
+      }
+    });
+
+    res.status(200).json(formatado);
+  });
+});
 
 // ==================== Rota da interface ENTREGA ==================== //
 
