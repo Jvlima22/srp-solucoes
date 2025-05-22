@@ -152,7 +152,7 @@ app.get("/manifesto", (req, res) => {
   });
 });
 
-// ==================== Rota da interface OCORRÊNCIAS ==================== //
+// ==================== Rota da interface OCORRÊNCIAS  ==================== //
 
 app.get("/ocorrencias/:id", async (req, res) => {
   const manifestoId = req.params.id;
@@ -266,6 +266,163 @@ app.get("/ocorrencias/:id", async (req, res) => {
     });
 
     res.status(200).json(formatado);
+  });
+});
+
+// ==================== Rota de LANÇAR OCORRÊNCIA DA ENTREGA ==================== //
+
+app.get("/ocorrencia/entrega/:freteId", async (req, res) => {
+  const { freteId } = req.params;
+
+  const sql = `
+    SELECT 
+      om.id,
+      o.nome AS ocorrencia,
+      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data_ocorrencia,
+      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora_ocorrencia,
+      om.observacao
+    FROM ocorrencia_movimento om
+    LEFT JOIN ocorrencia o ON o.id = om.id_ocorrencia
+    WHERE om.id_movimento = ?
+    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
+  `;
+
+  db.query(sql, [freteId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar ocorrências:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar ocorrências" });
+    }
+
+    res.status(200).json(results);
+  });
+});
+
+app.post("/ocorrencia/entrega/:freteId", async (req, res) => {
+  const { freteId } = req.params;
+  const { ocorrencia, data, hora, observacao } = req.body;
+
+  if (!ocorrencia || !data || !hora) {
+    return res.status(400).json({ error: "Campos 'ocorrencia', 'data' e 'hora' são obrigatórios" });
+  }
+
+  // Primeiro, é preciso pegar o ID da ocorrência pelo nome 'ocorrencia'
+  const sqlGetOcorrenciaId = "SELECT id FROM ocorrencia WHERE nome = ? LIMIT 1";
+
+  db.query(sqlGetOcorrenciaId, [ocorrencia], (err, ocorrenciaResult) => {
+    if (err) {
+      console.error("Erro ao buscar id da ocorrência:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar id da ocorrência" });
+    }
+
+    if (ocorrenciaResult.length === 0) {
+      return res.status(400).json({ error: "Ocorrência inválida" });
+    }
+
+    const idOcorrencia = ocorrenciaResult[0].id;
+
+    // Agora insere a nova ocorrência
+    const sqlInsert = `
+      INSERT INTO ocorrencia_movimento 
+      (id_movimento, id_ocorrencia, data_ocorrencia, hora_ocorrencia, observacao) 
+      VALUES (?, ?, STR_TO_DATE(?, '%d/%m/%Y'), ?, ?)
+    `;
+
+    db.query(sqlInsert, [freteId, idOcorrencia, data, hora, observacao || null], (err2, result) => {
+      if (err2) {
+        console.error("Erro ao inserir ocorrência:", err2.message);
+        return res.status(500).json({ error: "Erro ao inserir ocorrência" });
+      }
+
+      return res.status(201).json({ message: "Ocorrência inserida com sucesso", id: result.insertId });
+    });
+  });
+});
+
+app.get("/detalhes/entrega/:freteId", (req, res) => {
+  const { freteId } = req.params;
+
+  const sql = `
+    SELECT 
+      om.id AS numero,
+      om.id_movimento AS frete,
+      o.nome AS ocorrencia,
+      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data,
+      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
+    FROM ocorrencia_movimento om
+    LEFT JOIN ocorrencia o ON o.id = om.id_ocorrencia
+    WHERE om.id_movimento = ?
+    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
+  `;
+
+  db.query(sql, [freteId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar ocorrências de entrega:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar ocorrências" });
+    }
+
+    res.status(200).json(results);
+  });
+});
+
+app.put("/ocorrencias/:id", (req, res) => {
+  const { id } = req.params;
+  const { ocorrencia, data, hora, observacao } = req.body;
+
+  if (!ocorrencia || !data || !hora) {
+    return res.status(400).json({ error: "Campos 'ocorrencia', 'data' e 'hora' são obrigatórios" });
+  }
+
+  // Lista restrita de ocorrências permitidas
+  const ocorrenciasPermitidas = [
+    "Aguardado no local",
+    "Cliente recusou a entrega",
+    "Entrega cancelada pelo cliente",
+    "Entrega realizado normalmente"
+  ];
+
+  if (!ocorrenciasPermitidas.includes(ocorrencia.trim())) {
+    return res.status(400).json({ error: "Ocorrência não permitida para atualização." });
+  }
+
+  const sqlGetOcorrenciaId = `
+    SELECT id FROM ocorrencia 
+    WHERE TRIM(nome) = TRIM(?) 
+    LIMIT 1
+  `;
+
+  db.query(sqlGetOcorrenciaId, [ocorrencia], (err, ocorrenciaResult) => {
+    if (err) {
+      console.error("Erro ao buscar id da ocorrência:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar id da ocorrência" });
+    }
+
+    if (ocorrenciaResult.length === 0) {
+      return res.status(400).json({ error: "Ocorrência não encontrada no banco de dados." });
+    }
+
+    const idOcorrencia = ocorrenciaResult[0].id;
+
+    const sqlUpdate = `
+      UPDATE ocorrencia_movimento
+      SET id_ocorrencia = ?, 
+          data_ocorrencia = STR_TO_DATE(?, '%d/%m/%Y'),
+          hora_ocorrencia = ?, 
+          observacao = ?
+      WHERE id = ?
+    `;
+
+    db.query(sqlUpdate, [idOcorrencia, data, hora, observacao || null, id], (err2, result) => {
+      if (err2) {
+        console.error("Erro ao atualizar ocorrência:", err2.message);
+        return res.status(500).json({ error: "Erro ao atualizar ocorrência" });
+      }
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: "Ocorrência não encontrada" });
+      }
+
+      return res.status(200).json({ message: "Ocorrência atualizada com sucesso" });
+    });
   });
 });
 
