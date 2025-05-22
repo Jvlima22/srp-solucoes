@@ -38,30 +38,37 @@ app.get("/", (req, res) => {
 
 // ==================== Rotas da interface LOGIN ==================== //
 
-app.get("/login", (req, res) => {
-  const { login, senha, unidade } = req.query;
+app.post("/login", (req, res) => {
+  const { login, senha, unidade } = req.body;
 
-  console.log("Dados recebidos:", { login, senha, unidade });
+  if (!login || !senha || !unidade) {
+    return res.status(400).json({ error: "Campos obrigatórios: login, senha, unidade" });
+  }
+
+  const senhaMD5 = require("crypto")
+    .createHash("md5")
+    .update(senha)
+    .digest("hex");
 
   const sql = `
     SELECT 
       us.id,
       us.nome,
       us.login,
-      te.nome AS nome_unidade
+      tu.nome AS nome_unidade
     FROM srpsoluc_teste.usuario_sistema us
-    JOIN srpsoluc_tmenu.tms_empresas te ON us.id_unidade = te.id
-    WHERE us.login = ? AND us.senha = ? AND te.nome = ? AND us.status = 1
+    JOIN srpsoluc_tmenu.tipo_usuario tu ON us.id_unidade = tu.id
+    WHERE us.login = ? AND us.senha = ? AND tu.nome = ? AND us.status = 1
   `;
 
-  db.query(sql, [login, senha, unidade], (err, results) => {
+  db.query(sql, [login, senhaMD5, unidade.toUpperCase()], (err, results) => {
     if (err) {
       console.error("Erro ao validar login:", err.message);
       return res.status(500).json({ error: "Erro interno no servidor" });
     }
 
     if (results.length === 0) {
-      return res.status(401).json({ error: "Credenciais inválidas" });
+      return res.status(401).json({ error: "Credenciais inválidas ou usuário inativo" });
     }
 
     const { id, nome, login: usuarioLogin, nome_unidade } = results[0];
@@ -73,7 +80,8 @@ app.get("/login", (req, res) => {
         nome,
         login: usuarioLogin,
         nome_unidade,
-      },
+        unidade
+      }
     });
   });
 });
@@ -338,32 +346,6 @@ app.post("/ocorrencia/entrega/:freteId", async (req, res) => {
   });
 });
 
-app.get("/detalhes/entrega/:freteId", (req, res) => {
-  const { freteId } = req.params;
-
-  const sql = `
-    SELECT 
-      om.id AS numero,
-      om.id_movimento AS frete,
-      o.nome AS ocorrencia,
-      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data,
-      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
-    FROM ocorrencia_movimento om
-    LEFT JOIN ocorrencia o ON o.id = om.id_ocorrencia
-    WHERE om.id_movimento = ?
-    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
-  `;
-
-  db.query(sql, [freteId], (err, results) => {
-    if (err) {
-      console.error("Erro ao buscar ocorrências de entrega:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar ocorrências" });
-    }
-
-    res.status(200).json(results);
-  });
-});
-
 app.put("/ocorrencias/:id", (req, res) => {
   const { id } = req.params;
   const { ocorrencia, data, hora, observacao } = req.body;
@@ -423,6 +405,34 @@ app.put("/ocorrencias/:id", (req, res) => {
 
       return res.status(200).json({ message: "Ocorrência atualizada com sucesso" });
     });
+  });
+});
+
+// ==================== Rota de DETALHES DA OCORRÊNCIA DA ENTREGA ==================== //
+
+app.get("/detalhes/entrega/:freteId", (req, res) => {
+  const { freteId } = req.params;
+
+  const sql = `
+    SELECT 
+      om.id AS numero,
+      om.id_movimento AS frete,
+      o.nome AS ocorrencia,
+      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data,
+      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
+    FROM ocorrencia_movimento om
+    LEFT JOIN ocorrencia o ON o.id = om.id_ocorrencia
+    WHERE om.id_movimento = ?
+    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
+  `;
+
+  db.query(sql, [freteId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar ocorrências de entrega:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar ocorrências" });
+    }
+
+    res.status(200).json(results);
   });
 });
 
