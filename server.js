@@ -4,14 +4,20 @@ const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const multer = require("multer");
+const path = require("path");
 
-dotenv.config(); 
+dotenv.config();
 
 const app = express();
+app.use(express.json());
+app.use(cors());
 
-// Middlewares
-app.use(express.json()); 
-app.use(cors());  
+// Importante: criar a pasta 'uploads' na raiz do seu projeto antes de rodar o servidor.
+// No Linux/Mac: mkdir uploads
+// No Windows: mkdir uploads
+// Essa pasta armazenará os arquivos enviados via upload.
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Configuração do banco de dados
 const db = mysql.createConnection({
@@ -22,7 +28,6 @@ const db = mysql.createConnection({
   port: 3306,
 });
 
-// Testar conexão com o banco de dados
 db.connect((err) => {
   if (err) {
     console.error("❌ Erro ao conectar ao MySQL:", err.message);
@@ -31,10 +36,12 @@ db.connect((err) => {
   console.log("✅ Conectado ao MySQL!");
 });
 
-// Rota para testar a conexão
-app.get("/", (req, res) => {
-  res.send("Servidor está funcionando! Acesse /usuarios para interagir com os dados.");
+// Configuração do Multer para upload de arquivos na pasta uploads/
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
+const upload = multer({ storage });
 
 // ==================== Rotas da interface LOGIN ==================== //
 
@@ -116,7 +123,7 @@ app.get("/usuarios", (req, res) => {
 
 // ==================== Rotas da interface MANIFESTO ==================== //
 
-app.get("/manifesto", (req, res) => {
+app.get("/manifestos", (req, res) => {
   const sql = `
     SELECT
       mm.id_manifesto,
@@ -162,7 +169,7 @@ app.get("/manifesto", (req, res) => {
 
 // ==================== Rota da interface OCORRÊNCIAS  ==================== //
 
-app.get("/ocorrencias/:id", async (req, res) => {
+app.get("/manifestos/ocorrencias/:id", async (req, res) => {
   const manifestoId = req.params.id;
 
   const tipos = {
@@ -279,6 +286,7 @@ app.get("/ocorrencias/:id", async (req, res) => {
 
 // ==================== Rota de LANÇAR OCORRÊNCIA DA ENTREGA ==================== //
 
+// Listar ocorrências de entrega ✅
 app.get("/ocorrencia/entrega/:freteId", async (req, res) => {
   const { freteId } = req.params;
 
@@ -305,47 +313,126 @@ app.get("/ocorrencia/entrega/:freteId", async (req, res) => {
   });
 });
 
+// Lançar ocorrência de entrega 
 app.post("/ocorrencia/entrega/:freteId", async (req, res) => {
   const { freteId } = req.params;
-  const { ocorrencia, data, hora, observacao } = req.body;
+  const {
+    ocorrencia,
+    data_ocorrencia,
+    hora_ocorrencia,
+    observacao,
+    recebedor,
+    documento_recebedor,
+    id_tipo_recebedor,
+    arquivo
+  } = req.body;
 
-  if (!ocorrencia || !data || !hora) {
-    return res.status(400).json({ error: "Campos 'ocorrencia', 'data' e 'hora' são obrigatórios" });
+  // Lista de ocorrências que exigem os campos obrigatórios
+  const ocorrenciasObrigamDados = [
+    "Aguardado no local",
+    "Cliente recusou a entrega",
+    "Entrega cancelada pelo cliente"
+  ];
+
+  if (ocorrenciasObrigamDados.includes(ocorrencia)) {
+    if (!data_ocorrencia || !hora_ocorrencia || !observacao) {
+      return res.status(400).json({
+        error: 'Para a ocorrência informada, é necessário fornecer data_ocorrencia, hora_ocorrencia e observacao.'
+      });
+    }
   }
 
-  // Primeiro, é preciso pegar o ID da ocorrência pelo nome 'ocorrencia'
-  const sqlGetOcorrenciaId = "SELECT id FROM ocorrencia WHERE nome = ? LIMIT 1";
+  let id_ocorrencia;
+  switch (ocorrencia) {
+    case "Aguardado no local":
+      id_ocorrencia = 1;
+      break;
+    case "Cliente recusou a entrega":
+      id_ocorrencia = 2;
+      break;
+    case "Entrega cancelada pelo cliente":
+      id_ocorrencia = 3;
+      break;
+    case "Entrega realizado normalmente":
+      id_ocorrencia = 4; // Exemplo
+      break;
+    default:
+      id_ocorrencia = 99;
+  }
 
-  db.query(sqlGetOcorrenciaId, [ocorrencia], (err, ocorrenciaResult) => {
-    if (err) {
-      console.error("Erro ao buscar id da ocorrência:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar id da ocorrência" });
-    }
+  const id_tipo_movimento = 4;
+  const id_documento = 2;
+  const tipo_acao = 1;
+  const comprovante = 0;
+  const id_manifesto = 0;
+  const id_motorista = 0;
+  const id_usuario = 1;
+  const dt_cadastro = new Date();
 
-    if (ocorrenciaResult.length === 0) {
-      return res.status(400).json({ error: "Ocorrência inválida" });
-    }
+  try {
+    const sqlInsercaoOcorrencia = 
+      `INSERT INTO ocorrencia_movimento (
+        id_movimento,
+        id_tipo_movimento,
+        id_documento,
+        id_ocorrencia,
+        tipo_acao,
+        data_ocorrencia,
+        hora_ocorrencia,
+        comprovante,
+        id_manifesto,
+        id_motorista,
+        observacao,
+        id_usuario,
+        dt_cadastro
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-    const idOcorrencia = ocorrenciaResult[0].id;
+    await db.execute(sqlInsercaoOcorrencia, [
+      freteId,
+      id_tipo_movimento,
+      id_documento,
+      id_ocorrencia,
+      tipo_acao,
+      data_ocorrencia || null,
+      hora_ocorrencia || null,
+      comprovante,
+      id_manifesto,
+      id_motorista,
+      observacao || null,
+      id_usuario,
+      dt_cadastro
+    ]);
 
-    // Agora insere a nova ocorrência
-    const sqlInsert = `
-      INSERT INTO ocorrencia_movimento 
-      (id_movimento, id_ocorrencia, data_ocorrencia, hora_ocorrencia, observacao) 
-      VALUES (?, ?, STR_TO_DATE(?, '%d/%m/%Y'), ?, ?)
+    // Atualiza a tabela frete_documento com os dados do recebedor e tipo_recebedor
+    const sqlAtualizaFreteDocumento = `
+      UPDATE frete_documento
+      SET
+        recebedor = ?,
+        documento_recebedor = ?,
+        id_tipo_recebedor = ?,
+        -- arquivo pode ser salvo em outra tabela ou local, pois não está na frete_documento?
+        id_ocorrencia = ?,
+        dt_cadastro = ?
+      WHERE id_frete = ?
     `;
 
-    db.query(sqlInsert, [freteId, idOcorrencia, data, hora, observacao || null], (err2, result) => {
-      if (err2) {
-        console.error("Erro ao inserir ocorrência:", err2.message);
-        return res.status(500).json({ error: "Erro ao inserir ocorrência" });
-      }
+    await db.execute(sqlAtualizaFreteDocumento, [
+      recebedor || null,
+      documento_recebedor || null,
+      id_tipo_recebedor || null,
+      id_ocorrencia,
+      dt_cadastro,
+      freteId
+    ]);
 
-      return res.status(201).json({ message: "Ocorrência inserida com sucesso", id: result.insertId });
-    });
-  });
+    res.status(201).json({ message: `Ocorrência "${ocorrencia}" registrada com sucesso!` });
+  } catch (error) {
+    console.error('Erro ao registrar ocorrência:', error);
+    res.status(500).json({ error: 'Erro ao registrar ocorrência.' });
+  }
 });
 
+// Atualizar ocorrência ✅
 app.put("/ocorrencias/:id", (req, res) => {
   const { id } = req.params;
   const { ocorrencia, data, hora, observacao } = req.body;
@@ -408,8 +495,7 @@ app.put("/ocorrencias/:id", (req, res) => {
   });
 });
 
-// ==================== Rota de DETALHES DA OCORRÊNCIA DA ENTREGA ==================== //
-
+// Listar detalhes da ocorrência ✅
 app.get("/detalhes/entrega/:freteId", (req, res) => {
   const { freteId } = req.params;
 
