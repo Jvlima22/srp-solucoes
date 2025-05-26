@@ -286,17 +286,17 @@ app.get("/manifestos/ocorrencias/:id", async (req, res) => {
 
 // ==================== Rota de LANÇAR OCORRÊNCIA DA ENTREGA ==================== //
 
-// Listar ocorrências de entrega ✅
-app.get("/ocorrencia/entrega/:freteId", async (req, res) => {
+// Listar detalhes da entrega ✅
+app.get("/detalhes/entrega/:freteId", (req, res) => {
   const { freteId } = req.params;
 
   const sql = `
     SELECT 
-      om.id,
+      om.id AS numero,
+      om.id_movimento AS frete,
       o.nome AS ocorrencia,
-      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data_ocorrencia,
-      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora_ocorrencia,
-      om.observacao
+      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data,
+      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
     FROM ocorrencia_movimento om
     LEFT JOIN ocorrencia o ON o.id = om.id_ocorrencia
     WHERE om.id_movimento = ?
@@ -305,7 +305,7 @@ app.get("/ocorrencia/entrega/:freteId", async (req, res) => {
 
   db.query(sql, [freteId], (err, results) => {
     if (err) {
-      console.error("Erro ao buscar ocorrências:", err.message);
+      console.error("Erro ao buscar ocorrências de entrega:", err.message);
       return res.status(500).json({ error: "Erro ao buscar ocorrências" });
     }
 
@@ -432,94 +432,135 @@ app.post("/ocorrencia/entrega/:freteId", async (req, res) => {
   }
 });
 
-// Atualizar ocorrência ✅
-app.put("/ocorrencias/:id", (req, res) => {
-  const { id } = req.params;
-  const { ocorrencia, data, hora, observacao } = req.body;
+// Atualizar ocorrência de entrega
+app.put("/ocorrencia/entrega/:freteId", async (req, res) => {
+  const { freteId } = req.params;
+  const {
+    ocorrencia,
+    data_ocorrencia,
+    hora_ocorrencia,
+    observacao,
+    recebedor,
+    documento_recebedor,
+    id_tipo_recebedor,
+    arquivo
+  } = req.body;
 
-  if (!ocorrencia || !data || !hora) {
-    return res.status(400).json({ error: "Campos 'ocorrencia', 'data' e 'hora' são obrigatórios" });
-  }
-
-  // Lista restrita de ocorrências permitidas
-  const ocorrenciasPermitidas = [
+  const ocorrenciasRestritas = [
     "Aguardado no local",
     "Cliente recusou a entrega",
-    "Entrega cancelada pelo cliente",
-    "Entrega realizado normalmente"
+    "Entrega cancelada pelo cliente"
   ];
 
-  if (!ocorrenciasPermitidas.includes(ocorrencia.trim())) {
-    return res.status(400).json({ error: "Ocorrência não permitida para atualização." });
+  // Validação para ocorrências restritas - só pode atualizar se tiver exatamente esses campos no body
+  if (ocorrenciasRestritas.includes(ocorrencia)) {
+    // Verifica campos obrigatórios
+    if (!data_ocorrencia || !hora_ocorrencia || !observacao) {
+      return res.status(400).json({
+        error: 'Para essa ocorrência é obrigatório informar data_ocorrencia, hora_ocorrencia e observacao.'
+      });
+    }
+
+    // Verifica se existe algum campo extra além desses quatro (ocorrencia + os 3)
+    const chavesBody = Object.keys(req.body);
+    const chavesPermitidas = ["ocorrencia", "data_ocorrencia", "hora_ocorrencia", "observacao"];
+    const temCampoExtra = chavesBody.some(chave => !chavesPermitidas.includes(chave));
+
+    if (temCampoExtra) {
+      return res.status(400).json({
+        error: 'Para essa ocorrência, o body deve conter somente ocorrencia, data_ocorrencia, hora_ocorrencia e observacao.'
+      });
+    }
   }
 
-  const sqlGetOcorrenciaId = `
-    SELECT id FROM ocorrencia 
-    WHERE TRIM(nome) = TRIM(?) 
-    LIMIT 1
-  `;
-
-  db.query(sqlGetOcorrenciaId, [ocorrencia], (err, ocorrenciaResult) => {
-    if (err) {
-      console.error("Erro ao buscar id da ocorrência:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar id da ocorrência" });
+  // Para ocorrência "entrega realizado normalmente" permite outros campos
+  if (ocorrencia === "entrega realizado normalmente") {
+    // Apenas certifique que os campos principais estejam presentes (se quiser)
+    if (!data_ocorrencia || !hora_ocorrencia) {
+      return res.status(400).json({
+        error: 'Para "entrega realizado normalmente", data_ocorrencia e hora_ocorrencia são obrigatórios.'
+      });
     }
+  }
 
-    if (ocorrenciaResult.length === 0) {
-      return res.status(400).json({ error: "Ocorrência não encontrada no banco de dados." });
-    }
+  // Para outras ocorrências que não estejam na lista e não sejam "entrega realizado normalmente", negar
+  const ocorrenciasValidas = [...ocorrenciasRestritas, "entrega realizado normalmente"];
+  if (!ocorrenciasValidas.includes(ocorrencia)) {
+    return res.status(400).json({
+      error: `Ocorrência "${ocorrencia}" não permitida para atualização.`
+    });
+  }
 
-    const idOcorrencia = ocorrenciaResult[0].id;
+  let id_ocorrencia;
+  switch (ocorrencia) {
+    case "Aguardado no local":
+      id_ocorrencia = 1;
+      break;
+    case "Cliente recusou a entrega":
+      id_ocorrencia = 2;
+      break;
+    case "Entrega cancelada pelo cliente":
+      id_ocorrencia = 3;
+      break;
+    case "entrega realizado normalmente":
+      id_ocorrencia = 4;
+      break;
+    default:
+      id_ocorrencia = 99;
+  }
 
-    const sqlUpdate = `
+  const dt_atualizacao = new Date();
+
+  try {
+    // Atualiza a ocorrência mais recente relacionada ao frete
+    const sqlUpdateOcorrencia = `
       UPDATE ocorrencia_movimento
-      SET id_ocorrencia = ?, 
-          data_ocorrencia = STR_TO_DATE(?, '%d/%m/%Y'),
-          hora_ocorrencia = ?, 
-          observacao = ?
-      WHERE id = ?
+      SET
+        id_ocorrencia = ?,
+        data_ocorrencia = ?,
+        hora_ocorrencia = ?,
+        observacao = ?,
+        dt_cadastro = ?
+      WHERE id_movimento = ? AND id_tipo_movimento = 4 AND id_documento = 2
+      ORDER BY dt_cadastro DESC
+      LIMIT 1
     `;
 
-    db.query(sqlUpdate, [idOcorrencia, data, hora, observacao || null, id], (err2, result) => {
-      if (err2) {
-        console.error("Erro ao atualizar ocorrência:", err2.message);
-        return res.status(500).json({ error: "Erro ao atualizar ocorrência" });
-      }
+    await db.execute(sqlUpdateOcorrencia, [
+      id_ocorrencia,
+      data_ocorrencia || null,
+      hora_ocorrencia || null,
+      observacao || null,
+      dt_atualizacao,
+      freteId
+    ]);
 
-      if (result.affectedRows === 0) {
-        return res.status(404).json({ error: "Ocorrência não encontrada" });
-      }
+    // Atualiza a tabela frete_documento
+    const sqlAtualizaFreteDocumento = `
+      UPDATE frete_documento
+      SET
+        recebedor = ?,
+        documento_recebedor = ?,
+        id_tipo_recebedor = ?,
+        id_ocorrencia = ?,
+        dt_cadastro = ?
+      WHERE id_frete = ?
+    `;
 
-      return res.status(200).json({ message: "Ocorrência atualizada com sucesso" });
-    });
-  });
-});
+    await db.execute(sqlAtualizaFreteDocumento, [
+      recebedor || null,
+      documento_recebedor || null,
+      id_tipo_recebedor || null,
+      id_ocorrencia,
+      dt_atualizacao,
+      freteId
+    ]);
 
-// Listar detalhes da ocorrência ✅
-app.get("/detalhes/entrega/:freteId", (req, res) => {
-  const { freteId } = req.params;
-
-  const sql = `
-    SELECT 
-      om.id AS numero,
-      om.id_movimento AS frete,
-      o.nome AS ocorrencia,
-      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data,
-      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
-    FROM ocorrencia_movimento om
-    LEFT JOIN ocorrencia o ON o.id = om.id_ocorrencia
-    WHERE om.id_movimento = ?
-    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
-  `;
-
-  db.query(sql, [freteId], (err, results) => {
-    if (err) {
-      console.error("Erro ao buscar ocorrências de entrega:", err.message);
-      return res.status(500).json({ error: "Erro ao buscar ocorrências" });
-    }
-
-    res.status(200).json(results);
-  });
+    res.status(200).json({ message: `Ocorrência "${ocorrencia}" atualizada com sucesso!` });
+  } catch (error) {
+    console.error('Erro ao atualizar ocorrência:', error);
+    res.status(500).json({ error: 'Erro ao atualizar ocorrência.' });
+  }
 });
 
 // ==================== Rota da interface ENTREGA ==================== //
