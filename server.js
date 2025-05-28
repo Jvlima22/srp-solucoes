@@ -313,125 +313,6 @@ app.get("/detalhes/entrega/:freteId", (req, res) => {
   });
 });
 
-// Lançar ocorrência de entrega 
-app.post("/ocorrencia/entrega/:freteId", async (req, res) => {
-  const { freteId } = req.params;
-  const {
-    ocorrencia,
-    data_ocorrencia,
-    hora_ocorrencia,
-    observacao,
-    recebedor,
-    documento_recebedor,
-    id_tipo_recebedor,
-    arquivo
-  } = req.body;
-
-  // Lista de ocorrências que exigem os campos obrigatórios
-  const ocorrenciasObrigamDados = [
-    "Aguardado no local",
-    "Cliente recusou a entrega",
-    "Entrega cancelada pelo cliente"
-  ];
-
-  if (ocorrenciasObrigamDados.includes(ocorrencia)) {
-    if (!data_ocorrencia || !hora_ocorrencia || !observacao) {
-      return res.status(400).json({
-        error: 'Para a ocorrência informada, é necessário fornecer data_ocorrencia, hora_ocorrencia e observacao.'
-      });
-    }
-  }
-
-  let id_ocorrencia;
-  switch (ocorrencia) {
-    case "Aguardado no local":
-      id_ocorrencia = 1;
-      break;
-    case "Cliente recusou a entrega":
-      id_ocorrencia = 2;
-      break;
-    case "Entrega cancelada pelo cliente":
-      id_ocorrencia = 3;
-      break;
-    case "Entrega realizado normalmente":
-      id_ocorrencia = 4; // Exemplo
-      break;
-    default:
-      id_ocorrencia = 99;
-  }
-
-  const id_tipo_movimento = 4;
-  const id_documento = 2;
-  const tipo_acao = 1;
-  const comprovante = 0;
-  const id_manifesto = 0;
-  const id_motorista = 0;
-  const id_usuario = 1;
-  const dt_cadastro = new Date();
-
-  try {
-    const sqlInsercaoOcorrencia = 
-      `INSERT INTO ocorrencia_movimento (
-        id_movimento,
-        id_tipo_movimento,
-        id_documento,
-        id_ocorrencia,
-        tipo_acao,
-        data_ocorrencia,
-        hora_ocorrencia,
-        comprovante,
-        id_manifesto,
-        id_motorista,
-        observacao,
-        id_usuario,
-        dt_cadastro
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-    await db.execute(sqlInsercaoOcorrencia, [
-      freteId,
-      id_tipo_movimento,
-      id_documento,
-      id_ocorrencia,
-      tipo_acao,
-      data_ocorrencia || null,
-      hora_ocorrencia || null,
-      comprovante,
-      id_manifesto,
-      id_motorista,
-      observacao || null,
-      id_usuario,
-      dt_cadastro
-    ]);
-
-    // Atualiza a tabela frete_documento com os dados do recebedor e tipo_recebedor
-    const sqlAtualizaFreteDocumento = `
-      UPDATE frete_documento
-      SET
-        recebedor = ?,
-        documento_recebedor = ?,
-        id_tipo_recebedor = ?,
-        -- arquivo pode ser salvo em outra tabela ou local, pois não está na frete_documento?
-        id_ocorrencia = ?,
-        dt_cadastro = ?
-      WHERE id_frete = ?
-    `;
-
-    await db.execute(sqlAtualizaFreteDocumento, [
-      recebedor || null,
-      documento_recebedor || null,
-      id_tipo_recebedor || null,
-      id_ocorrencia,
-      dt_cadastro,
-      freteId
-    ]);
-
-    res.status(201).json({ message: `Ocorrência "${ocorrencia}" registrada com sucesso!` });
-  } catch (error) {
-    console.error('Erro ao registrar ocorrência:', error);
-    res.status(500).json({ error: 'Erro ao registrar ocorrência.' });
-  }
-});
-
 // Atualizar ocorrência de entrega
 app.put("/ocorrencia/entrega/:freteId", async (req, res) => {
   const { freteId } = req.params;
@@ -560,6 +441,179 @@ app.put("/ocorrencia/entrega/:freteId", async (req, res) => {
   } catch (error) {
     console.error('Erro ao atualizar ocorrência:', error);
     res.status(500).json({ error: 'Erro ao atualizar ocorrência.' });
+  }
+});
+
+// ==================== Rota de LANÇAR OCORRÊNCIA DA COLETA ==================== //
+
+// Listar detalhes da coleta ✅
+app.get("/detalhes/coleta/:freteId", async (req, res) => {
+  const freteId = req.params.freteId;
+
+  const sql = `
+    SELECT 
+      om.id,
+      om.data_ocorrencia,
+      om.hora_ocorrencia,
+      o.nome AS ocorrencia
+    FROM ocorrencia_movimento om
+    LEFT JOIN ocorrencia o ON o.id = om.id_ocorrencia
+    WHERE om.id_movimento = ?
+    ORDER BY om.data_ocorrencia ASC, om.hora_ocorrencia ASC
+  `;
+
+  db.query(sql, [freteId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar ocorrências da coleta:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar ocorrências da coleta" });
+    }
+
+    const ocorrencias = results.length > 0
+      ? results.map((item, index) => {
+          const dataFormatada = new Date(item.data_ocorrencia).toLocaleDateString("pt-BR");
+          const horaFormatada = item.hora_ocorrencia?.slice(0, 5) || "-";
+          return {
+            numero: index + 1,
+            documento: freteId,
+            ocorrencia: item.ocorrencia || "Sem Registro",
+            data: dataFormatada,
+            hora: horaFormatada
+          };
+        })
+      : [{
+          numero: 1,
+          documento: freteId,
+          ocorrencia: "Sem Registro",
+          data: "-",
+          hora: "-"
+        }];
+
+    res.status(200).json(ocorrencias);
+  });
+});
+
+// Atualizar ocorrência de coleta
+app.put("/ocorrencia/coleta/:freteId", async (req, res) => {
+  const { freteId } = req.params;
+  const {
+    ocorrencia,
+    data_ocorrencia,
+    hora_ocorrencia,
+    observacao,
+    recebedor,
+    documento_recebedor,
+    id_tipo_recebedor,
+    arquivo
+  } = req.body;
+
+  const ocorrenciasRestritas = ["coleta cancelada", "Filial"];
+  const ocorrenciaNormal = "Coleta realizado normalmente";
+
+  // Validação para ocorrências restritas
+  if (ocorrenciasRestritas.includes(ocorrencia)) {
+    if (!data_ocorrencia || !hora_ocorrencia || !observacao) {
+      return res.status(400).json({
+        error: 'Para essa ocorrência é obrigatório informar data_ocorrencia, hora_ocorrencia e observacao.'
+      });
+    }
+
+    const chavesBody = Object.keys(req.body);
+    const chavesPermitidas = ["ocorrencia", "data_ocorrencia", "hora_ocorrencia", "observacao"];
+    const temCampoExtra = chavesBody.some(chave => !chavesPermitidas.includes(chave));
+
+    if (temCampoExtra) {
+      return res.status(400).json({
+        error: 'Para essa ocorrência, o body deve conter somente ocorrencia, data_ocorrencia, hora_ocorrencia e observacao.'
+      });
+    }
+  }
+
+  // Validação para "Coleta realizado normalmente"
+  if (ocorrencia === ocorrenciaNormal) {
+    if (!data_ocorrencia || !hora_ocorrencia || !observacao || !recebedor || !documento_recebedor || !id_tipo_recebedor || !arquivo) {
+      return res.status(400).json({
+        error: 'Para "Coleta realizado normalmente", todos os campos são obrigatórios.'
+      });
+    }
+  }
+
+  // Se a ocorrência não for válida, rejeita
+  const ocorrenciasValidas = [...ocorrenciasRestritas, ocorrenciaNormal];
+  if (!ocorrenciasValidas.includes(ocorrencia)) {
+    return res.status(400).json({
+      error: `Ocorrência "${ocorrencia}" não permitida para atualização.`
+    });
+  }
+
+  // Mapeia ocorrência para id_ocorrencia
+  let id_ocorrencia;
+  switch (ocorrencia) {
+    case "coleta cancelada":
+      id_ocorrencia = 10;
+      break;
+    case "Filial":
+      id_ocorrencia = 11;
+      break;
+    case "Coleta realizado normalmente":
+      id_ocorrencia = 12;
+      break;
+    default:
+      id_ocorrencia = 99;
+  }
+
+  const dt_atualizacao = new Date();
+
+  try {
+    // Atualiza a ocorrência mais recente relacionada à coleta (id_tipo_movimento = 5)
+    const sqlUpdateOcorrencia = `
+      UPDATE ocorrencia_movimento
+      SET
+        id_ocorrencia = ?,
+        data_ocorrencia = ?,
+        hora_ocorrencia = ?,
+        observacao = ?,
+        dt_cadastro = ?
+      WHERE id_movimento = ? AND id_tipo_movimento = 5 AND id_documento = 2
+      ORDER BY dt_cadastro DESC
+      LIMIT 1
+    `;
+
+    await db.execute(sqlUpdateOcorrencia, [
+      id_ocorrencia,
+      data_ocorrencia || null,
+      hora_ocorrencia || null,
+      observacao || null,
+      dt_atualizacao,
+      freteId
+    ]);
+
+    // Atualiza frete_documento, se aplicável
+    if (ocorrencia === ocorrenciaNormal) {
+      const sqlAtualizaFreteDocumento = `
+        UPDATE frete_documento
+        SET
+          recebedor = ?,
+          documento_recebedor = ?,
+          id_tipo_recebedor = ?,
+          id_ocorrencia = ?,
+          dt_cadastro = ?
+        WHERE id_frete = ?
+      `;
+
+      await db.execute(sqlAtualizaFreteDocumento, [
+        recebedor || null,
+        documento_recebedor || null,
+        id_tipo_recebedor || null,
+        id_ocorrencia,
+        dt_atualizacao,
+        freteId
+      ]);
+    }
+
+    res.status(200).json({ message: `Ocorrência de coleta "${ocorrencia}" atualizada com sucesso!` });
+  } catch (error) {
+    console.error('Erro ao atualizar ocorrência de coleta:', error);
+    res.status(500).json({ error: 'Erro ao atualizar ocorrência de coleta.' });
   }
 });
 
