@@ -4,8 +4,6 @@ const express = require("express");
 const mysql = require("mysql2");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const multer = require("multer");
-const path = require("path");
 
 dotenv.config();
 
@@ -13,11 +11,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Importante: criar a pasta 'uploads' na raiz do seu projeto antes de rodar o servidor.
-// No Linux/Mac: mkdir uploads
-// No Windows: mkdir uploads
-// Essa pasta armazenará os arquivos enviados via upload.
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Configuração do banco de dados
 const db = mysql.createConnection({
@@ -36,12 +29,6 @@ db.connect((err) => {
   console.log("✅ Conectado ao MySQL!");
 });
 
-// Configuração do Multer para upload de arquivos na pasta uploads/
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "uploads/"),
-  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
-});
-const upload = multer({ storage });
 
 // ==================== Rotas da interface LOGIN ==================== //
 
@@ -614,6 +601,347 @@ app.put("/ocorrencia/coleta/:freteId", async (req, res) => {
   } catch (error) {
     console.error('Erro ao atualizar ocorrência de coleta:', error);
     res.status(500).json({ error: 'Erro ao atualizar ocorrência de coleta.' });
+  }
+});
+
+// ==================== Rota de LANÇAR OCORRÊNCIA DA DESPACHO ==================== //
+
+// Listar detalhes do despacho ✅
+app.get("/detalhes/despacho/:minutaId", async (req, res) => {
+  const minutaId = req.params.minutaId;
+
+  const sql = `
+    SELECT 
+      f.id AS minuta_numero,
+      f.id AS frete,
+      fd.numero AS documento,
+      oco.nome AS ocorrencias,
+      DATE_FORMAT(om.data_ocorrencia, '%Y-%m-%d') AS data,
+      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    LEFT JOIN ocorrencia_movimento om ON om.id_movimento = f.id
+    LEFT JOIN ocorrencia oco ON oco.id = om.id_ocorrencia
+    WHERE f.id = ?
+    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
+    LIMIT 1
+  `;
+
+  db.query(sql, [minutaId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar detalhes do despacho:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar detalhes do despacho" });
+    }
+
+    if (!results || results.length === 0) {
+      return res.status(404).json({ message: "Minuta não encontrada ou sem dados relacionados" });
+    }
+
+    const row = results[0];
+
+    const response = {
+      numero_minuta: row.minuta_numero,
+      frete: row.frete,
+      documento: row.documento || "",
+      ocorrencias: row.ocorrencias || "",
+      data: row.data || "",
+      hora: row.hora || ""
+    };
+
+    res.status(200).json(response);
+  });
+});
+
+// Atualizar ocorrência de despacho
+app.put("/ocorrencia/despacho/:minutaId", async (req, res) => {
+  const { minutaId } = req.params;
+  const {
+    ocorrencia,
+    data_ocorrencia,
+    hora_ocorrencia,
+    observacao
+  } = req.body;
+
+  // Validação básica dos campos obrigatórios
+  if (!ocorrencia || !data_ocorrencia || !hora_ocorrencia || !observacao) {
+    return res.status(400).json({
+      error: "Campos obrigatórios: ocorrencia, data_ocorrencia, hora_ocorrencia, observacao"
+    });
+  }
+
+  try {
+    // Busca o id_ocorrencia pelo nome da ocorrência no banco
+    const [ocorrencias] = await db.promise().query(
+      "SELECT id FROM ocorrencia WHERE LOWER(nome) = LOWER(?)",
+      [ocorrencia]
+    );
+
+    if (!ocorrencias.length) {
+      return res.status(400).json({ error: `Ocorrência "${ocorrencia}" não encontrada no banco.` });
+    }
+
+    const id_ocorrencia = ocorrencias[0].id;
+    const dt_atualizacao = new Date();
+
+    // Atualiza a ocorrência mais recente relacionada ao despacho (id_tipo_movimento = 4)
+    const [result] = await db.promise().query(
+      `
+      UPDATE ocorrencia_movimento
+      SET
+        id_ocorrencia = ?,
+        data_ocorrencia = ?,
+        hora_ocorrencia = ?,
+        observacao = ?,
+        dt_cadastro = ?
+      WHERE id_movimento = ? AND id_tipo_movimento = 4
+      ORDER BY dt_cadastro DESC
+      LIMIT 1
+      `,
+      [
+        id_ocorrencia,
+        data_ocorrencia,
+        hora_ocorrencia,
+        observacao,
+        dt_atualizacao,
+        minutaId
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Ocorrência de despacho não encontrada para atualizar." });
+    }
+
+    res.status(200).json({ message: `Ocorrência "${ocorrencia}" atualizada com sucesso!` });
+  } catch (error) {
+    console.error('Erro ao atualizar ocorrência de despacho:', error);
+    res.status(500).json({ error: 'Erro ao atualizar ocorrência de despacho.' });
+  }
+});
+
+// ==================== Rota de LANÇAR OCORRÊNCIA DA RETIRADA ==================== //
+
+// Listar detalhes da retirada ✅
+app.get("/detalhes/retirada/:minutaId", async (req, res) => {
+  const minutaId = req.params.minutaId;
+
+  const sql = `
+    SELECT 
+      f.id AS frete,
+      fd.numero AS documento,
+      oco.nome AS ocorrencia,
+      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data,
+      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    LEFT JOIN ocorrencia_movimento om ON om.id_movimento = f.id AND om.id_tipo_movimento = 5
+    LEFT JOIN ocorrencia oco ON oco.id = om.id_ocorrencia
+    WHERE f.id = ?
+    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
+    LIMIT 1
+  `;
+
+  db.query(sql, [minutaId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar detalhes da retirada:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar detalhes da retirada" });
+    }
+
+    if (!results || results.length === 0) {
+      return res.status(404).json({ message: "Minuta não encontrada ou sem dados relacionados" });
+    }
+
+    const row = results[0];
+
+    res.status(200).json({
+      frete: row.frete,
+      documento: row.documento || "",
+      ocorrencia: row.ocorrencia || "Sem Registro",
+      data: row.data || "",
+      hora: row.hora || ""
+    });
+  });
+});
+
+// Atualizar ocorrência de retirada
+app.put("/ocorrencia/retirada/:minutaId", async (req, res) => {
+  const { minutaId } = req.params;
+  const {
+    ocorrencia,
+    data_ocorrencia,
+    hora_ocorrencia,
+    observacao
+  } = req.body;
+
+  // Só permite "Retira cancelada"
+  if (!ocorrencia || ocorrencia.toLowerCase() !== "retira cancelada") {
+    return res.status(400).json({
+      error: 'Apenas a ocorrência "Retira cancelada" é permitida nesta rota.'
+    });
+  }
+
+  // Validação dos campos obrigatórios
+  if (!data_ocorrencia || !hora_ocorrencia || !observacao) {
+    return res.status(400).json({
+      error: "Campos obrigatórios: data_ocorrencia, hora_ocorrencia, observacao"
+    });
+  }
+
+  try {
+    // Busca o id_ocorrencia correspondente no banco
+    const [ocorrencias] = await db.promise().query(
+      "SELECT id FROM ocorrencia WHERE LOWER(nome) = LOWER(?)",
+      [ocorrencia]
+    );
+
+    if (!ocorrencias.length) {
+      return res.status(400).json({ error: `Ocorrência "${ocorrencia}" não encontrada no banco.` });
+    }
+
+    const id_ocorrencia = ocorrencias[0].id;
+    const dt_atualizacao = new Date();
+
+    // Atualiza a ocorrência mais recente de retirada (id_tipo_movimento = 5)
+    const [result] = await db.promise().query(
+      `
+      UPDATE ocorrencia_movimento
+      SET
+        id_ocorrencia = ?,
+        data_ocorrencia = ?,
+        hora_ocorrencia = ?,
+        observacao = ?,
+        dt_cadastro = ?
+      WHERE id_movimento = ? AND id_tipo_movimento = 5
+      ORDER BY dt_cadastro DESC
+      LIMIT 1
+      `,
+      [
+        id_ocorrencia,
+        data_ocorrencia,
+        hora_ocorrencia,
+        observacao,
+        dt_atualizacao,
+        minutaId
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Ocorrência de retirada não encontrada para atualizar." });
+    }
+
+    res.status(200).json({ message: `Ocorrência "${ocorrencia}" atualizada com sucesso!` });
+  } catch (error) {
+    console.error('Erro ao atualizar ocorrência de retirada:', error);
+    res.status(500).json({ error: 'Erro ao atualizar ocorrência de retirada.' });
+  }
+});
+
+// ==================== Rota de LANÇAR OCORRÊNCIA DA TRANSFERÊNCIA ==================== //
+
+// Detalhes da ocorrência de transferência
+app.get("/detalhes/transferencia/:minutaId", async (req, res) => {
+  const minutaId = req.params.minutaId;
+
+  const sql = `
+    SELECT 
+      f.id AS frete,
+      fd.numero AS documento,
+      oco.nome AS ocorrencia,
+      DATE_FORMAT(om.data_ocorrencia, '%d/%m/%Y') AS data,
+      TIME_FORMAT(om.hora_ocorrencia, '%H:%i') AS hora
+    FROM frete f
+    LEFT JOIN frete_documento fd ON fd.id_frete = f.id
+    LEFT JOIN ocorrencia_movimento om ON om.id_movimento = f.id AND om.id_tipo_movimento = 7
+    LEFT JOIN ocorrencia oco ON oco.id = om.id_ocorrencia
+    WHERE f.id = ?
+    ORDER BY om.data_ocorrencia DESC, om.hora_ocorrencia DESC
+    LIMIT 1
+  `;
+
+  db.query(sql, [minutaId], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar detalhes da transferência:", err.message);
+      return res.status(500).json({ error: "Erro ao buscar detalhes da transferência" });
+    }
+
+    if (!results || results.length === 0) {
+      return res.status(404).json({ message: "Minuta não encontrada ou sem dados relacionados" });
+    }
+
+    const row = results[0];
+
+    res.status(200).json({
+      frete: row.frete,
+      documento: row.documento || "",
+      ocorrencia: row.ocorrencia || "Sem Registro",
+      data: row.data || "",
+      hora: row.hora || ""
+    });
+  });
+});
+
+// Atualizar ocorrência de transferência
+app.put("/ocorrencia/transferencia/:minutaId", async (req, res) => {
+  const { minutaId } = req.params;
+  const {
+    ocorrencia,
+    data_ocorrencia,
+    hora_ocorrencia,
+    observacao
+  } = req.body;
+
+  // Validação dos campos obrigatórios
+  if (!ocorrencia || !data_ocorrencia || !hora_ocorrencia || !observacao) {
+    return res.status(400).json({
+      error: "Campos obrigatórios: ocorrencia, data_ocorrencia, hora_ocorrencia, observacao"
+    });
+  }
+
+  try {
+    // Busca o id_ocorrencia correspondente no banco
+    const [ocorrencias] = await db.promise().query(
+      "SELECT id FROM ocorrencia WHERE LOWER(nome) = LOWER(?)",
+      [ocorrencia]
+    );
+
+    if (!ocorrencias.length) {
+      return res.status(400).json({ error: `Ocorrência "${ocorrencia}" não encontrada no banco.` });
+    }
+
+    const id_ocorrencia = ocorrencias[0].id;
+    const dt_atualizacao = new Date();
+
+    // Atualiza a ocorrência mais recente de transferência (id_tipo_movimento = 7)
+    const [result] = await db.promise().query(
+      `
+      UPDATE ocorrencia_movimento
+      SET
+        id_ocorrencia = ?,
+        data_ocorrencia = ?,
+        hora_ocorrencia = ?,
+        observacao = ?,
+        dt_cadastro = ?
+      WHERE id_movimento = ? AND id_tipo_movimento = 7
+      ORDER BY dt_cadastro DESC
+      LIMIT 1
+      `,
+      [
+        id_ocorrencia,
+        data_ocorrencia,
+        hora_ocorrencia,
+        observacao,
+        dt_atualizacao,
+        minutaId
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Ocorrência de transferência não encontrada para atualizar." });
+    }
+
+    res.status(200).json({ message: `Ocorrência "${ocorrencia}" de transferência atualizada com sucesso!` });
+  } catch (error) {
+    console.error('Erro ao atualizar ocorrência de transferência:', error);
+    res.status(500).json({ error: 'Erro ao atualizar ocorrência de transferência.' });
   }
 });
 
